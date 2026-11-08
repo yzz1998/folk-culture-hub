@@ -1,0 +1,288 @@
+import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+import clsx from 'clsx'
+import { Heart, PenLine, Trash2 } from 'lucide-react'
+import { FOLK, FOLK_MAP } from '@/data/folk'
+import type { GradeBand } from '@/lib/types'
+import { GRADE_BANDS, GRADE_SHORT } from '@/lib/types'
+import { Button, Card, Drawer, EmptyState, Segmented, Tag, SearchInput } from '@/components/ui'
+import { PageHeader } from '@/components/layout/PageHeader'
+import { useApp, useToast } from '@/store/AppStore'
+
+export default function Community() {
+  const { posts, addPost, likePost, removePost } = useApp()
+  const { toast } = useToast()
+
+  const [grade, setGrade] = useState<GradeBand | 'all'>('all')
+  const [q, setQ] = useState('')
+  const [composing, setComposing] = useState(false)
+  const [liked, setLiked] = useState<string[]>([])
+
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
+  const [author, setAuthor] = useState('')
+  const [postGrade, setPostGrade] = useState<GradeBand>('3-4')
+  const [folkIds, setFolkIds] = useState<string[]>([])
+
+  const list = useMemo(() => {
+    let l = posts
+    if (grade !== 'all') l = l.filter((p) => !p.gradeBand || p.gradeBand === grade)
+    if (q.trim()) {
+      const t = q.trim().toLowerCase()
+      l = l.filter(
+        (p) =>
+          p.title.toLowerCase().includes(t) ||
+          p.body.toLowerCase().includes(t) ||
+          p.author.toLowerCase().includes(t),
+      )
+    }
+    return [...l].sort((a, b) => b.createdAt - a.createdAt)
+  }, [posts, grade, q])
+
+  function submit() {
+    if (!title.trim() || !body.trim()) {
+      toast('标题和正文都要填', 'warn')
+      return
+    }
+    addPost({
+      author: author.trim() || '匿名教师',
+      title: title.trim(),
+      body: body.trim(),
+      folkIds,
+      gradeBand: postGrade,
+    })
+    setTitle('')
+    setBody('')
+    setAuthor('')
+    setFolkIds([])
+    setComposing(false)
+    toast('已发布')
+  }
+
+  return (
+    <div className="animate-fade">
+      <PageHeader
+        eyebrow="教师交流"
+        title="把上过的一节课，讲给同行听"
+        desc="这里记录的是真实的教学处理经验：哪个环节卡住了、尺度怎么把握、材料去哪里找。数据存在本机浏览器，换设备不同步。"
+        right={
+          <Button variant="primary" onClick={() => setComposing(true)}>
+            <PenLine size={14} />
+            写一条
+          </Button>
+        }
+      />
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Segmented
+          size="sm"
+          value={grade}
+          onChange={setGrade}
+          options={[
+            { value: 'all' as const, label: '全部年级' },
+            ...GRADE_BANDS.map((g) => ({ value: g, label: GRADE_SHORT[g] })),
+          ]}
+        />
+        <SearchInput
+          size="sm"
+          value={q}
+          onChange={setQ}
+          placeholder="搜经验、教师、关键词…"
+          className="w-full sm:ml-auto sm:w-52"
+        />
+      </div>
+
+      {list.length === 0 ? (
+        <EmptyState
+          title="还没有相关内容"
+          desc="换个关键词，或者成为第一个写下课堂经验的人。"
+          action={
+            <Button variant="primary" onClick={() => setComposing(true)}>
+              写一条
+            </Button>
+          }
+        />
+      ) : (
+        <div className="space-y-2.5">
+          {list.map((p, i) => {
+            const folk = p.folkIds.map((id) => FOLK_MAP.get(id)).filter(Boolean)
+            const isLiked = liked.includes(p.id)
+            return (
+              <div key={p.id} className="animate-rise" style={{ animationDelay: `${Math.min(i, 8) * 24}ms` }}>
+                <Card className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <h3 className="font-serif text-[14.5px] font-semibold leading-snug tracking-tight text-ink">
+                          {p.title}
+                        </h3>
+                        {p.sample && (
+                          <Tag size="sm" tone="ochre">
+                            示例
+                          </Tag>
+                        )}
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10.5px] text-ink-4">
+                        <span>{p.author}</span>
+                        <span>·</span>
+                        <span>{new Date(p.createdAt).toLocaleDateString('zh-CN')}</span>
+                        {p.gradeBand && (
+                          <>
+                            <span>·</span>
+                            <span>{GRADE_SHORT[p.gradeBand]}</span>
+                          </>
+                        )}
+                      </div>
+                      <p className="mt-2 whitespace-pre-line text-[12.5px] leading-[1.85] text-ink-2">
+                        {p.body}
+                      </p>
+                      {folk.length > 0 && (
+                        <div className="mt-2.5 flex flex-wrap gap-1">
+                          {folk.map((f) => (
+                            <Link key={f!.id} to={`/folk/${f!.id}`}>
+                              <Tag size="sm">{f!.name}</Tag>
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex shrink-0 flex-col items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isLiked) return
+                          likePost(p.id)
+                          setLiked((s) => [...s, p.id])
+                        }}
+                        aria-label="赞"
+                        className={clsx(
+                          'grid h-8 w-8 place-items-center rounded-sm border transition-colors',
+                          isLiked
+                            ? 'border-cinnabar-l bg-cinnabar-p text-cinnabar'
+                            : 'border-line text-ink-4 hover:border-ink-4 hover:text-cinnabar',
+                        )}
+                      >
+                        <Heart size={13} fill={isLiked ? 'currentColor' : 'none'} />
+                      </button>
+                      <span className="tnum text-[10px] text-ink-4">{p.likes}</span>
+                    </div>
+                  </div>
+
+                  {!p.sample && (
+                    <div className="mt-2 flex justify-end border-t border-line-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          removePost(p.id)
+                          toast('已删除')
+                        }}
+                        className="inline-flex items-center gap-1 text-[10.5px] text-ink-4 hover:text-cinnabar"
+                      >
+                        <Trash2 size={11} />
+                        删除
+                      </button>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <Drawer
+        open={composing}
+        onClose={() => setComposing(false)}
+        title="写一条课堂经验"
+        footer={
+          <div className="flex gap-2">
+            <Button variant="outline" block onClick={() => setComposing(false)}>
+              取消
+            </Button>
+            <Button variant="primary" block onClick={submit}>
+              发布
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-3.5 p-4">
+          <label className="block">
+            <span className="mb-1 block text-[10.5px] font-medium text-ink-3">标题</span>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="一句话说清这条经验是什么"
+              className="h-9 w-full rounded-sm border border-line bg-card px-2.5 text-[13px] outline-none focus:border-cinnabar/60"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-[10.5px] font-medium text-ink-3">正文</span>
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={6}
+              placeholder="哪个环节卡住了、怎么处理的、效果如何…"
+              className="w-full resize-none rounded-sm border border-line bg-card px-2.5 py-2 text-[12.5px] leading-[1.8] outline-none focus:border-cinnabar/60"
+            />
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1 block text-[10.5px] font-medium text-ink-3">署名（可留空）</span>
+              <input
+                value={author}
+                onChange={(e) => setAuthor(e.target.value)}
+                placeholder="如：林老师 · 三年级"
+                className="h-9 w-full rounded-sm border border-line bg-card px-2.5 text-[12.5px] outline-none focus:border-cinnabar/60"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10.5px] font-medium text-ink-3">年级</span>
+              <select
+                value={postGrade}
+                onChange={(e) => setPostGrade(e.target.value as GradeBand)}
+                className="h-9 w-full rounded-sm border border-line bg-card px-2 text-[12px] outline-none focus:border-cinnabar/60"
+              >
+                {GRADE_BANDS.map((g) => (
+                  <option key={g} value={g}>
+                    {GRADE_SHORT[g]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div>
+            <span className="mb-1 block text-[10.5px] font-medium text-ink-3">关联民俗（可选，最多 2 个）</span>
+            <div className="no-scrollbar flex max-h-28 flex-wrap gap-1 overflow-y-auto rounded-sm border border-line bg-paper-2/40 p-2">
+              {FOLK.slice(0, 24).map((f) => {
+                const on = folkIds.includes(f.id)
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() =>
+                      setFolkIds((s) =>
+                        s.includes(f.id) ? s.filter((x) => x !== f.id) : s.length >= 2 ? s : [...s, f.id],
+                      )
+                    }
+                    className={clsx(
+                      'rounded-xs border px-1.5 py-0.5 text-[10.5px] transition-colors',
+                      on
+                        ? 'border-cinnabar bg-cinnabar text-white'
+                        : 'border-line bg-card text-ink-2 hover:border-ink-4',
+                    )}
+                  >
+                    {f.name}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      </Drawer>
+    </div>
+  )
+}

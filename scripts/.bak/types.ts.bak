@@ -1,0 +1,528 @@
+/* ═══════════════════════════════════════════════════════════════
+   核心类型契约
+   所有页面、数据文件与智能体共用这一套结构。
+   新增课程知识模块时只需扩展 curriculum.ts，无需改动页面。
+   ═══════════════════════════════════════════════════════════════ */
+
+export type FolkCategory =
+  | '节日节庆'
+  | '二十四节气'
+  | '民间技艺'
+  | '服饰民居'
+  | '饮食民俗'
+  | '民间游艺'
+  | '信仰祭祀'
+  | '民间文学'
+
+export type GradeBand = '1-2' | '3-4' | '5-6'
+
+/**
+ * 小学阶段国家课程学科（《义务教育课程方案（2022 年版）》共 10 门）
+ * 外加本平台所服务的《人类与社会》课程本身。
+ */
+export type Subject =
+  | '语文'
+  | '数学'
+  | '英语'
+  | '道德与法治'
+  | '科学'
+  | '体育与健康'
+  | '艺术'
+  | '劳动'
+  | '信息科技'
+  | '综合实践'
+  | '人类社会'
+
+/** 民俗与某一学科的关联强度。民俗只是当前的重点演示方向，不是所有学科的共同入口。 */
+export type FolkAffinity = 'strong' | 'fair' | 'weak' | 'none'
+
+export type Region = '全国' | '闽东'
+
+export type Theme =
+  | '家国情怀'
+  | '家族伦理'
+  | '人与自然'
+  | '技艺传承'
+  | '多元一体'
+  | '生活智慧'
+
+/* ── 纹样生成参数（剪纸风格 SVG） ───────────────────── */
+export type Motif =
+  | 'flower' // 团花
+  | 'window' // 窗格
+  | 'fish' // 鱼
+  | 'bird' // 鸟
+  | 'dragon' // 龙
+  | 'cloud' // 云纹
+  | 'wave' // 水波
+  | 'mountain' // 山形
+  | 'lantern' // 灯笼
+  | 'fret' // 回纹
+
+export type PaletteName = 'cinnabar' | 'indigo' | 'ochre' | 'bamboo' | 'ink'
+
+export interface PatternSpec {
+  motif: Motif
+  palette: PaletteName
+  density: 1 | 2 | 3
+}
+
+/* ── 民俗文化条目 ──────────────────────────────────── */
+export interface FolkItem {
+  id: string
+  name: string
+  category: FolkCategory
+  region: Region
+  themes: Theme[]
+  subjects: Subject[]
+  grades: GradeBand[]
+  /** 一句话概述 */
+  summary: string
+  /** 文化内涵，智能体核心取用字段 */
+  culturalMeaning: string
+  /** 源流脉络 */
+  origin: string
+  /** 课堂可切入的三个观察点 */
+  classroomHooks: string[]
+  keywords: string[]
+  /** 关联的课程知识点 id */
+  curriculumLinks: string[]
+  materialIds: string[]
+  pattern: PatternSpec
+  /** 时令推荐月份 */
+  seasonMonths?: number[]
+  /** 常见教学误区提示，教师视角的实用信息 */
+  caution?: string
+}
+
+/* ── 课程知识结构（可扩展） ────────────────────────── */
+export interface KnowledgePoint {
+  id: string
+  title: string
+  summary: string
+  gradeBand?: GradeBand
+  /** 反向推荐：适合结合的民俗 id */
+  folkHooks: string[]
+  /** ready = 已有内容；planned = 预留位，等待补充 */
+  status: 'ready' | 'planned'
+}
+
+export interface CurriculumUnit {
+  id: string
+  title: string
+  points: KnowledgePoint[]
+}
+
+export interface CurriculumChapter {
+  id: string
+  order: number
+  title: string
+  brief: string
+  /** 该章与民俗文化的天然结合点，一句话 */
+  folkAngle: string
+  units: CurriculumUnit[]
+}
+
+/* ── 教案 ──────────────────────────────────────────── */
+export interface FlowStage {
+  stage: string
+  minutes: number
+  teacher: string
+  student: string
+  intent: string
+}
+
+/** 活动形式。民俗融合课多用前六类，学科本体课会用到后面的操作/实验/练习等。 */
+export type ActivityType =
+  | '体验'
+  | '探究'
+  | '表达'
+  | '制作'
+  | '讨论'
+  | '游戏'
+  | '操作'
+  | '实验'
+  | '观察'
+  | '设计'
+  | '练习'
+  | '比赛'
+  | '创作'
+  | '辨析'
+  | '写作'
+  | '考察'
+
+export interface Activity {
+  name: string
+  type: ActivityType
+  minutes: number
+  desc: string
+  grouping: string
+}
+
+export interface Objectives {
+  knowledge: string
+  ability: string
+  emotion: string
+}
+
+/**
+ * 课例与民俗的关系。民俗只是当前的重点演示方向，不是所有课例的共同前提。
+ * core    —— 民俗是内容本体（如剪纸、节日）
+ * support —— 民俗作情境或素材引入，学科内容仍是主体
+ * none    —— 不涉及民俗，学科内容独立呈现
+ */
+export type FolkLink = 'core' | 'support' | 'none'
+
+export const FOLK_LINK_LABEL: Record<FolkLink, string> = {
+  core: '民俗本体',
+  support: '民俗作素材',
+  none: '学科本体',
+}
+
+export interface LessonPlan {
+  id: string
+  title: string
+  folkIds: string[]
+  chapterId: string
+  pointIds: string[]
+  gradeBand: GradeBand
+  subject: Subject
+  duration: number
+  /** 本课与民俗的关系；缺省时按 folkIds 是否为空推断 */
+  folkLink?: FolkLink
+  objectives: Objectives
+  keyPoints: string[]
+  difficultPoints: string[]
+  preparation: string[]
+  flow: FlowStage[]
+  activities: Activity[]
+  evaluation: string
+  homework: { basic: string; extend: string; project: string }
+  differentiation: { support: string; challenge: string }
+  boardDesign?: string
+  reflection?: string
+  /** 教学尺度提醒：涉及信仰、民族、家庭结构等敏感内容时的处理建议 */
+  caution?: string
+}
+
+/* ── 素材 ──────────────────────────────────────────── */
+export type MaterialType = 'image' | 'audio' | 'video' | 'text'
+
+export interface Material {
+  id: string
+  type: MaterialType
+  title: string
+  folkId: string
+  desc: string
+  /** 音视频条目：建议时长 */
+  duration?: string
+  /** 文本素材正文 */
+  body?: string
+  /** 用途标注 */
+  usage?: string
+  /** 素材状态：placeholder = 待替换为本校素材 */
+  status: 'ready' | 'placeholder'
+  /** 图片素材的纹样参数，无则为 undefined */
+  pattern?: PatternSpec
+}
+
+/* ── 智能体 ────────────────────────────────────────── */
+export type TeachStyle =
+  | '体验探究'
+  | '知识讲授'
+  | '项目式'
+  | '情境任务'
+  | '复习巩固'
+  | '跨学科主题'
+export type EngineKind = 'local' | 'llm'
+
+export interface AgentInput {
+  folkIds: string[]
+  pointIds: string[]
+  gradeBand: GradeBand
+  subject: Subject
+  /** 教师自拟的课程主题，直接作为教案标题 */
+  topic?: string
+  duration: number
+  style: TeachStyle
+  /** 已选学情预设的 id（见 src/data/teachingPresets.ts），可空 */
+  issues?: string[]
+  /** 教师补充的学情说明，可空 */
+  notes?: string
+}
+
+export interface RationaleItem {
+  label: string
+  text: string
+}
+
+export interface GeneratedPlan {
+  id: string
+  createdAt: number
+  title: string
+  input: AgentInput
+  rationale: RationaleItem[]
+  plan: LessonPlan
+  engine: EngineKind
+  /** 生成时的引擎备注，例如「大模型不可用，已切换本地引擎」 */
+  note?: string
+}
+
+/* ── 收藏 / 草稿 / 交流 ────────────────────────────── */
+export type CollectionKind = 'folk' | 'lesson' | 'plan'
+
+export interface Draft {
+  id: string
+  title: string
+  savedAt: number
+  plan: LessonPlan
+}
+
+export interface Post {
+  id: string
+  createdAt: number
+  author: string
+  title: string
+  body: string
+  folkIds: string[]
+  gradeBand?: GradeBand
+  likes: number
+  sample?: boolean
+}
+
+/* ── 设置 ──────────────────────────────────────────── */
+export interface LlmSettings {
+  enabled: boolean
+  baseUrl: string
+  apiKey: string
+  model: string
+}
+
+export const DEFAULT_LLM_SETTINGS: LlmSettings = {
+  enabled: false,
+  baseUrl: 'https://api.deepseek.com/v1',
+  apiKey: '',
+  model: 'deepseek-chat',
+}
+
+/* ── 字典与展示辅助 ────────────────────────────────── */
+export const FOLK_CATEGORIES: FolkCategory[] = [
+  '节日节庆',
+  '二十四节气',
+  '民间技艺',
+  '服饰民居',
+  '饮食民俗',
+  '民间游艺',
+  '信仰祭祀',
+  '民间文学',
+]
+
+export const GRADE_BANDS: GradeBand[] = ['1-2', '3-4', '5-6']
+
+/** 小学阶段国家课程学科，用于学科筛选与学科总览 */
+export const SUBJECTS: Subject[] = [
+  '语文',
+  '数学',
+  '英语',
+  '道德与法治',
+  '科学',
+  '体育与健康',
+  '艺术',
+  '劳动',
+  '信息科技',
+  '综合实践',
+]
+
+/** 本平台所服务的课程，独立于小学国家课程学科 */
+export const HOST_SUBJECT: Subject = '人类社会'
+
+/** 筛选器使用的完整学科列表（10 门学科 + 本课程） */
+export const ALL_SUBJECTS: Subject[] = [...SUBJECTS, HOST_SUBJECT]
+
+export const SUBJECT_LABEL: Record<Subject, string> = {
+  语文: '语文',
+  数学: '数学',
+  英语: '英语',
+  道德与法治: '道德与法治',
+  科学: '科学',
+  体育与健康: '体育与健康',
+  艺术: '艺术',
+  劳动: '劳动',
+  信息科技: '信息科技',
+  综合实践: '综合实践',
+  人类社会: '人类与社会',
+}
+
+/**
+ * 各学科的定位说明——这是「各学科与民俗演示之间是什么关系」的唯一数据源。
+ * 学科总览页、教案库标记、智能工坊提示都从这里取用，避免各处口径不一。
+ */
+export interface SubjectMeta {
+  key: Subject
+  /** 该学科在小学阶段的主线内容，用于说明「它自己讲什么」 */
+  ownCore: string
+  affinity: FolkAffinity
+  /** 民俗能为该学科提供什么；affinity 为 none 时说明为什么不必关联 */
+  folkRole: string
+  /** 本站对该学科的呈现方式 */
+  presentation: string
+  /** 典型内容线索 */
+  topics: string[]
+}
+
+export const SUBJECT_META: Record<Subject, SubjectMeta> = {
+  语文: {
+    key: '语文',
+    ownCore: '识字与写字、阅读与鉴赏、表达与交流、梳理与探究；以课文、整本书与写作任务为主线。',
+    affinity: 'strong',
+    folkRole:
+      '提供真实语料：谚语、谜语、方言童谣、民间故事与说明性文本，可直接用于朗读、复述与习作情境。',
+    presentation: '以「民俗文本 × 阅读/习作」的方式接入，民俗是语料来源，语文能力仍是目标。',
+    topics: ['民间故事复述', '谚语与俗语', '说明文抓住特征', '写人记事习作'],
+  },
+  数学: {
+    key: '数学',
+    ownCore:
+      '数与运算、图形与几何、统计与概率、综合与实践；以概念理解、算理与问题解决为主线。',
+    affinity: 'weak',
+    folkRole:
+      '仅在少数几何内容（轴对称、平移旋转、密铺）和统计情境中可用作素材。多数单元——如分数、方程、单位换算——与民俗无关，硬套只会增加教师负担。',
+    presentation: '以学科本体的独立课例为主，不要求与民俗关联；偶有几何单元可选用纹样素材。',
+    topics: ['分数的初步认识', '图形的运动', '条形统计图', '面积与周长'],
+  },
+  英语: {
+    key: '英语',
+    ownCore: '在语境中学习语音、词汇、语法与语篇，通过听、说、读、写完成任务。',
+    affinity: 'none',
+    folkRole:
+      '民俗只能作为文化背景出现，且需用小学生可理解的语言承载。把它当作英语课的主题会同时牺牲语言目标与文化理解。',
+    presentation: '完全独立呈现，按话题与功能组织课例，不涉及民俗。',
+    topics: ['Colours around us', 'My weekend plan', '问候与介绍', '食物与喜好'],
+  },
+  道德与法治: {
+    key: '道德与法治',
+    ownCore: '围绕自我、家庭、学校、社区、国家与世界的成长议题，以情境判断与价值澄清为主线。',
+    affinity: 'strong',
+    folkRole:
+      '提供真实的伦理情境：节庆中的家庭关系、乡约与村规、待客与邻里礼俗、生死与追念的处理方式。',
+    presentation: '以「民俗情境 × 价值辨析」接入，注意区分习俗描述与价值倡导。',
+    topics: ['节庆中的家庭', '社区公共生活', '规则怎么定', '多元文化与尊重'],
+  },
+  科学: {
+    key: '科学',
+    ownCore: '物质科学、生命科学、地球与宇宙、技术与工程；以观察实验、证据推理为主线。',
+    affinity: 'fair',
+    folkRole:
+      '传统技术经验（酿造、腌制、造纸、桥梁）可作为探究的起点与工程案例，但结论必须回到实验证据。',
+    presentation: '以「民俗技术 × 探究实验」接入，同时保留大量不依赖民俗的物质科学课例。',
+    topics: ['水的三态变化', '发酵与腌制', '简单机械', '植物的一生'],
+  },
+  体育与健康: {
+    key: '体育与健康',
+    ownCore: '基本运动技能、体能、专项运动技能、健康教育与安全；以身体练习为主线。',
+    affinity: 'fair',
+    folkRole: '民间游艺（踢毽、跳绳、龙舟、舞龙、摔跤）提供有文化意味的运动形式与集体规则。',
+    presentation: '以「民间游艺 × 运动技能」作为补充单元，主教材仍按体能与大项推进。',
+    topics: ['快速跑与接力', '民间体育游戏', '体能循环练习', '运动安全'],
+  },
+  艺术: {
+    key: '艺术',
+    ownCore: '音乐与美术的感受、欣赏、表现与创造；以审美经验与艺术实践为主线。',
+    affinity: 'strong',
+    folkRole:
+      '民俗是内容本体：剪纸、年画、泥塑、戏曲、民歌、器乐都属于艺术课程的学习对象，而非外挂情境。',
+    presentation: '以「民俗艺术本体」接入，直接作为欣赏与创作的内容。',
+    topics: ['剪纸与对称', '民间色彩', '地方戏曲', '民歌与节奏'],
+  },
+  劳动: {
+    key: '劳动',
+    ownCore: '日常生活劳动、生产劳动、服务性劳动；以真实任务中的动手实践与习惯养成为主线。',
+    affinity: 'strong',
+    folkRole:
+      '传统技艺是最贴近劳动课程的载体：竹编、制茶、酿酒、缝纫、农事，且自带完整工序与质量标准。',
+    presentation: '以「传统技艺 × 劳动任务」接入，强调工序、安全与成品质量。',
+    topics: ['整理与收纳', '竹编与纸艺', '种植与养护', '校园服务岗'],
+  },
+  信息科技: {
+    key: '信息科技',
+    ownCore: '数据、算法、网络、信息处理与信息安全；以数字化工具的使用与计算思维为主线。',
+    affinity: 'none',
+    folkRole:
+      '主线是数据与算法，与民俗没有必然联系。强行用民俗做项目外壳会挤占本就紧张的课时。',
+    presentation: '完全独立呈现，按数据、算法、网络三条线组织课例。',
+    topics: ['生活中的编码', '用循环画图形', '数据的收集与整理', '网络安全'],
+  },
+  综合实践: {
+    key: '综合实践',
+    ownCore: '考察探究、社会服务、设计制作、职业体验；以跨学科主题任务与完整探究过程为主线。',
+    affinity: 'fair',
+    folkRole:
+      '民俗可作为考察对象之一（如本地手艺人生存状况调查），但同样适合校园节水、交通、垃圾分类等主题。',
+    presentation: '以「主题任务」接入，民俗只是可选主题库中的一类。',
+    topics: ['校园用水调查', '社区访谈', '设计制作', '职业体验'],
+  },
+  人类社会: {
+    key: '人类社会',
+    ownCore:
+      '《人类与社会》课程本身：从族群、生计、信仰、制度到现代社会的整体理解，是本平台的主轴课程。',
+    affinity: 'strong',
+    folkRole: '民俗是本课程最直接的入口材料，也是当前平台的重点演示方向。',
+    presentation: '以课程知识地图为主线，民俗作为进入每一章的具体切口。',
+    topics: ['课程知识地图', '民俗与章节对应', '单元整体设计', '跨章比较'],
+  },
+}
+
+/** 取学科主线的第一句并去掉尾随标点，便于直接拼进句子 */
+export function subjectCoreBrief(subject: Subject): string {
+  return SUBJECT_META[subject].ownCore.split('；')[0].replace(/[。，、；\s]+$/, '')
+}
+
+export const AFFINITY_LABEL: Record<FolkAffinity, string> = {
+  strong: '民俗是主要内容',
+  fair: '民俗可作素材',
+  weak: '偶有可用单元',
+  none: '不必关联民俗',
+}
+
+export const AFFINITY_TONE: Record<FolkAffinity, 'cinnabar' | 'ochre' | 'indigo' | 'neutral'> = {
+  strong: 'cinnabar',
+  fair: 'ochre',
+  weak: 'indigo',
+  none: 'neutral',
+}
+
+export const THEMES: Theme[] = [
+  '家国情怀',
+  '家族伦理',
+  '人与自然',
+  '技艺传承',
+  '多元一体',
+  '生活智慧',
+]
+
+export const STYLES: TeachStyle[] = [
+  '体验探究',
+  '知识讲授',
+  '项目式',
+  '情境任务',
+  '复习巩固',
+  '跨学科主题',
+]
+
+export const GRADE_LABEL: Record<GradeBand, string> = {
+  '1-2': '低年级 1-2 年级',
+  '3-4': '中年级 3-4 年级',
+  '5-6': '高年级 5-6 年级',
+}
+
+export const GRADE_SHORT: Record<GradeBand, string> = {
+  '1-2': '1-2 年级',
+  '3-4': '3-4 年级',
+  '5-6': '5-6 年级',
+}
+
+/** 课时表述：40 分钟为 1 课时，其余保持分钟数 */
+export function durationLabel(minutes: number): string {
+  const k = minutes / 40
+  return Number.isInteger(k) && k >= 1 ? `${k} 课时` : `${minutes} 分钟`
+}

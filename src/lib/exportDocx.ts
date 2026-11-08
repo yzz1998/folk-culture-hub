@@ -1,0 +1,746 @@
+import type { FolkItem, GradeBand, LessonPlan, RationaleItem, Subject } from '@/lib/types'
+import { GRADE_LABEL, GRADE_SHORT, durationLabel } from '@/lib/types'
+import { FOLK_MAP } from '@/data/folk'
+import { POINT_MAP } from '@/data/curriculum'
+import { MATERIAL_MAP } from '@/data/materials'
+import { cardOfPoint } from '@/data/knowledgeCards'
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Word（.docx）导出
+
+   ── 导出范围（三层，边界写死在这里，不靠调用方自觉）─────────────────
+   ① 恒含（不可关）：
+      · 课程信息表（学科 / 教学内容 / 辅助知识点 / 所属章节 / 教学素材 / 学段 / 课时 / 风格 / 学情 / 引擎）
+        学科必须排在首行——文档的阅读顺序与平台的层级口径必须一致
+      · 教案正文十节，编号固定「一～十」，不因选项增减而错位
+      · 教学尺度提醒（plan.caution 存在时）
+      · 页眉、页脚、文末口径声明
+   ② 可选（默认开）：融合说明（3 条）、教学素材清单
+   ③ 可选（默认关）：知识要点摘录（知识点卡原文）
+   ④ 永不进入文档：站点导航与侧栏、收藏/草稿等本地状态、按钮与徽标、屏幕专用样式
+
+   ── 排版（A4，与教研组常用教案稿一致）─────────────────────────────
+   页面   A4 210×297mm；页边距 上下 25.4mm，左 30mm，右 25mm
+   字体   标题 黑体；正文 宋体；数字与西文 Times New Roman（标题用 Arial）
+   字号   文档标题 22pt(二号) / 一级标题 16pt(三号) / 二级标题 14pt(四号)
+          正文 12pt(小四) / 表格 10.5pt(五号) / 页眉页脚 9pt(小五)
+   段落   正文 1.5 倍行距、首行缩进 2 字符、两端对齐、段后 3pt
+          一级标题 段前 14pt / 段后 6pt；二级标题 段前 8pt / 段后 4pt
+   页眉   居中 9pt 灰字「乡音课坊 · 小学教师备课辅助 | 课程主题」，下方细线
+   页脚   居中「第 X 页　共 Y 页」（Word 域，随页数自动更新）
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── 规范常量：界面、文档与导出实现共用同一份，避免三处描述不一致 ────── */
+
+export const DOCX_STYLE_SPEC: { title: string; rows: [string, string][] }[] = [
+  {
+    title: '页面',
+    rows: [
+      ['纸张', 'A4（210 × 297 mm）'],
+      ['页边距', '上 25.4 / 下 25.4 / 左 30 / 右 25 mm'],
+      ['页眉页脚距边界', '12.7 mm'],
+    ],
+  },
+  {
+    title: '字体',
+    rows: [
+      ['标题（文档标题、各级标题、表头）', '黑体；西文 Arial'],
+      ['正文与表格内容', '宋体；西文 Times New Roman'],
+      ['页眉页脚', '宋体'],
+    ],
+  },
+  {
+    title: '字号与标题层级',
+    rows: [
+      ['文档标题', '22pt（二号），居中，段后 5pt'],
+      ['一级标题「一、二、三…」', '16pt（三号）加粗，段前 14pt / 段后 6pt，与下段同页'],
+      ['二级标题（教学重点 / 难点）', '14pt（四号）加粗，段前 8pt / 段后 4pt'],
+      ['正文', '12pt（小四）'],
+      ['表格内容', '10.5pt（五号），表头居中加粗'],
+      ['页眉页脚', '9pt（小五），灰色'],
+    ],
+  },
+  {
+    title: '段落与间距',
+    rows: [
+      ['正文', '1.5 倍行距，首行缩进 2 字符，两端对齐，段后 3pt'],
+      ['列表项', '悬挂缩进 14pt，段后 2pt'],
+      ['表格单元格', '单倍行距，垂直居中，上下留白 3pt'],
+      ['空行', '只用于标题区与信息表之间，不用连续回车撑页'],
+    ],
+  },
+  {
+    title: '页眉页脚',
+    rows: [
+      ['页眉', '居中「乡音课坊 · 小学教师备课辅助 | 课程主题」，9pt 灰字，下加细线'],
+      ['页脚', '居中「第 X 页　共 Y 页」，Word 域，随页数自动更新'],
+    ],
+  },
+]
+
+export interface DocxOptions {
+  /** 融合说明（文化这一侧 / 课程这一侧 / 两者怎么接上），默认开 */
+  rationale: boolean
+  /** 教学素材清单，默认开 */
+  materials: boolean
+  /** 知识要点摘录（所借知识点的知识卡），默认关 */
+  cardDigest: boolean
+}
+
+export const DEFAULT_DOCX_OPTIONS: DocxOptions = {
+  rationale: true,
+  materials: true,
+  cardDigest: false,
+}
+
+export interface DocxMeta {
+  /** 课程主题（用户自拟），用于信息表与页眉 */
+  topic: string
+  engineLabel: string
+  createdAt: number
+  styleLabel?: string
+  /** 已选学情预设的文字，可空 */
+  issuesLabel?: string
+  /** 融合说明三条；为空则即使 options.rationale 为真也不出附录 */
+  rationale?: RationaleItem[]
+}
+
+/* ── 文件命名 ────────────────────────────────────────────────────────── */
+
+export const FILENAME_TEMPLATE = '{主题}_{学段}_{学科}_{课时}_{日期}_{时刻}'
+/** 文件名变量的含义与取值示例，供导出面板与文档渲染 */
+export const FILENAME_VARS: { token: string; desc: string; example: string }[] = [
+  { token: '{主题}', desc: '教师自拟的课程主题；为空回落「学科备课教案」；非法字符转下划线，截断 40 字', example: '一张纸的旅行' },
+  { token: '{学段}', desc: '年级段，去空格便于按文件名排序', example: '3-4年级' },
+  { token: '{学科}', desc: '所选学科原名', example: '艺术' },
+  { token: '{课时}', desc: '40 分钟记 1 课时', example: '1课时' },
+  { token: '{日期}', desc: '导出日期，YYYYMMDD', example: '20261104' },
+  { token: '{时刻}', desc: '导出时刻，HHmm；同一主题反复导出不会互相覆盖', example: '1818' },
+]
+
+
+export interface FilenameParts {
+  topic: string
+  gradeBand: GradeBand
+  subject: Subject
+  duration: number
+  at?: Date
+}
+
+const ILLEGAL = /[\\/:*?"<>|\n\r\t]/g
+
+function clean(s: string, max = 40): string {
+  return s.replace(ILLEGAL, '_').replace(/\s+/g, '').replace(/_+/g, '_').slice(0, max) || '未命名'
+}
+
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/**
+ * 文件名规则：{主题}_{学段}_{学科}_{课时}_{日期}_{时刻}.docx
+ *   主题  取用户自拟的课程主题；为空时回落「学科备课教案」；非法字符转下划线，截断 40 字
+ *   学段  1-2年级 / 3-4年级 / 5-6年级（去空格，便于排序与检索）
+ *   学科  学科原名（不借用章节，避免文件名随辅助素材变化而变动）
+ *   课时  1课时 / 2课时（40 分钟记 1 课时）
+ *   日期  YYYYMMDD
+ *   时刻  HHmm（同一主题多次导出不会互相覆盖）
+ */
+export function buildFilename(p: FilenameParts, ext = 'docx'): string {
+  const at = p.at ?? new Date()
+  const parts = [
+    clean(p.topic || '学科备课教案', 40),
+    clean(GRADE_SHORT[p.gradeBand], 8),
+    clean(p.subject, 8),
+    clean(durationLabel(p.duration), 8),
+    `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}`,
+    `${pad(at.getHours())}${pad(at.getMinutes())}`,
+  ]
+  return `${parts.join('_')}.${ext}`
+}
+
+/* ── 样式常量（twips：1pt = 20 twips，1mm ≈ 56.7 twips）────────────── */
+
+const PAGE = { width: 11906, height: 16838 }
+
+const FONT_HEI = { ascii: 'Arial', hAnsi: 'Arial', eastAsia: '黑体', cs: 'Arial' }
+const FONT_SONG = { ascii: 'Times New Roman', hAnsi: 'Times New Roman', eastAsia: '宋体', cs: '宋体' }
+
+const INK = '1F1B16'
+const GREY = '8B8377'
+const LINE = 'CFC5B4'
+const TINT = 'F7F3EA'
+
+const CELL_MARGIN = { top: 60, bottom: 60, left: 110, right: 110 }
+const CN_NUM = ['一', '二', '三', '四', '五']
+
+/* ── 主构建函数 ─────────────────────────────────────────────────────── */
+
+export async function buildPlanDocx(
+  plan: LessonPlan,
+  meta: DocxMeta,
+  opts: DocxOptions = DEFAULT_DOCX_OPTIONS,
+): Promise<Blob> {
+  // 动态导入：docx 与 jszip 单独成 chunk，不进首屏包
+  const D = await import('docx')
+  const {
+    Document,
+    Packer,
+    Paragraph,
+    TextRun,
+    Table,
+    TableRow,
+    TableCell,
+    WidthType,
+    AlignmentType,
+    BorderStyle,
+    ShadingType,
+    VerticalAlign,
+    TableLayoutType,
+    LineRuleType,
+    Header,
+    Footer,
+    PageNumber,
+  } = D
+
+  type Block = InstanceType<typeof Paragraph> | InstanceType<typeof Table>
+
+  const total = plan.flow.reduce((a, s) => a + s.minutes, 0)
+  const folkItems: FolkItem[] = plan.folkIds
+    .map((id) => FOLK_MAP.get(id))
+    .filter((f): f is FolkItem => Boolean(f))
+  /** 教师勾选的教学素材：Word 与 Markdown 的素材清单都读这一份 */
+  const pickedMaterials = (plan.materialIds ?? [])
+    .map((id) => MATERIAL_MAP.get(id))
+    .filter((m): m is NonNullable<typeof m> => Boolean(m))
+  const points = plan.pointIds
+    .map((id) => POINT_MAP.get(id))
+    .filter((p): p is NonNullable<typeof p> => Boolean(p))
+
+  const borders = {
+    top: { style: BorderStyle.SINGLE, size: 6, color: LINE },
+    bottom: { style: BorderStyle.SINGLE, size: 6, color: LINE },
+    left: { style: BorderStyle.SINGLE, size: 6, color: LINE },
+    right: { style: BorderStyle.SINGLE, size: 6, color: LINE },
+    insideHorizontal: { style: BorderStyle.SINGLE, size: 6, color: LINE },
+    insideVertical: { style: BorderStyle.SINGLE, size: 6, color: LINE },
+  }
+
+  /* 段落与单元格工厂 */
+  const body = (text: string) =>
+    new Paragraph({
+      style: 'Body',
+      children: [new TextRun({ text: text || ' ', font: FONT_SONG, size: 24, color: INK })],
+    })
+
+  const h1 = (text: string) =>
+    new Paragraph({ style: 'H1', children: [new TextRun({ text, font: FONT_HEI, size: 32, bold: true, color: INK })] })
+
+  const h2 = (text: string) =>
+    new Paragraph({ style: 'H2', children: [new TextRun({ text, font: FONT_HEI, size: 28, bold: true, color: INK })] })
+
+  const bullet = (text: string) =>
+    new Paragraph({
+      style: 'ListItem',
+      bullet: { level: 0 },
+      children: [new TextRun({ text, font: FONT_SONG, size: 24, color: INK })],
+    })
+
+  const cell = (
+    text: string,
+    o: { w: number; head?: boolean; bold?: boolean; fill?: string } = { w: 100 },
+  ) =>
+    new TableCell({
+      width: { size: o.w, type: WidthType.PERCENTAGE },
+      verticalAlign: VerticalAlign.CENTER,
+      margins: CELL_MARGIN,
+      shading: o.head || o.fill ? { type: ShadingType.CLEAR, color: 'auto', fill: o.fill ?? TINT } : undefined,
+      children: [
+        new Paragraph({
+          style: 'TableText',
+          alignment: o.head ? AlignmentType.CENTER : AlignmentType.LEFT,
+          children: [
+            new TextRun({
+              text: text || '—',
+              font: o.head || o.bold ? FONT_HEI : FONT_SONG,
+              size: 21,
+              bold: Boolean(o.head || o.bold),
+              color: INK,
+            }),
+          ],
+        }),
+      ],
+    })
+
+  const kvTable = (rows: [string, string][]) =>
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      layout: TableLayoutType.FIXED,
+      borders,
+      rows: rows.map(
+        ([k, v]) => new TableRow({ children: [cell(k, { w: 18, bold: true, fill: TINT }), cell(v, { w: 82 })] }),
+      ),
+    })
+
+  /* ═══ 正文 ═══ */
+  const children: Block[] = []
+
+  children.push(
+    new Paragraph({
+      style: 'DocTitle',
+      children: [new TextRun({ text: plan.title, font: FONT_HEI, size: 44, bold: true, color: INK })],
+    }),
+    new Paragraph({
+      style: 'Center',
+      children: [
+        new TextRun({
+          text: `乡音课坊 · ${meta.engineLabel} · 生成于 ${new Date(meta.createdAt).toLocaleString('zh-CN', { hour12: false })}`,
+          font: FONT_SONG,
+          size: 18,
+          color: GREY,
+        }),
+      ],
+    }),
+    new Paragraph({ style: 'Gap', children: [] }),
+  )
+
+  // 课程信息
+  children.push(
+    kvTable([
+      ['学科', plan.subject],
+      ['教学内容', meta.topic || plan.title],
+      ['辅助知识点', points.length ? points.map((p) => `${p.title}（${p.chapterTitle}）`).join('、') : '未使用'],
+      ...(points.length > 0
+        ? ([['所属章节', [...new Set(points.map((p) => p.chapterTitle))].join('、')]] as [string, string][])
+        : []),
+      ['教学素材', pickedMaterials.map((m) => m.title).join('、') || '—'],
+      ['学段', GRADE_LABEL[plan.gradeBand]],
+      ['课时', durationLabel(plan.duration)],
+      ['教学风格', meta.styleLabel ?? '—'],
+      ...(meta.issuesLabel ? ([['学情预设', meta.issuesLabel]] as [string, string][]) : []),
+      ['生成引擎', meta.engineLabel],
+    ]),
+  )
+
+  // 教学尺度提醒
+  if (plan.caution) {
+    children.push(new Paragraph({ style: 'GapSm', children: [] }))
+    children.push(
+      new Paragraph({
+        shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'FBF1E4' },
+        spacing: { before: 60, after: 60 },
+        indent: { left: 120, right: 120 },
+        children: [
+          new TextRun({ text: '教学尺度提醒：', font: FONT_HEI, size: 20, bold: true, color: '94601F' }),
+          new TextRun({ text: plan.caution, font: FONT_SONG, size: 20, color: '5C4A32' }),
+        ],
+      }),
+    )
+  }
+
+  // 一、教学目标
+  children.push(h1('一、教学目标'))
+  children.push(
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      layout: TableLayoutType.FIXED,
+      borders,
+      rows: [
+        new TableRow({
+          tableHeader: true,
+          children: [cell('维度', { w: 14, head: true }), cell('目标表述', { w: 86, head: true })],
+        }),
+        ...(
+          [
+            ['知识', plan.objectives.knowledge],
+            ['能力', plan.objectives.ability],
+            ['情感', plan.objectives.emotion],
+          ] as [string, string][]
+        ).map(([k, v]) => new TableRow({ children: [cell(k, { w: 14, bold: true, fill: TINT }), cell(v, { w: 86 })] })),
+      ],
+    }),
+  )
+
+  // 二、重点难点
+  children.push(h1('二、教学重点与难点'))
+  children.push(h2('教学重点'))
+  plan.keyPoints.forEach((k) => children.push(bullet(k)))
+  children.push(h2('教学难点'))
+  plan.difficultPoints.forEach((k) => children.push(bullet(k)))
+
+  // 三、教学准备
+  children.push(h1('三、教学准备'))
+  plan.preparation.forEach((p) => children.push(bullet(p)))
+
+  // 四、教学过程
+  children.push(h1('四、教学过程'))
+  children.push(
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      layout: TableLayoutType.FIXED,
+      borders,
+      rows: [
+        new TableRow({
+          tableHeader: true,
+          children: [
+            cell('环节', { w: 13, head: true }),
+            cell('时长', { w: 8, head: true }),
+            cell('教师活动', { w: 30, head: true }),
+            cell('学生活动', { w: 26, head: true }),
+            cell('设计意图', { w: 23, head: true }),
+          ],
+        }),
+        ...plan.flow.map(
+          (s) =>
+            new TableRow({
+              children: [
+                cell(s.stage, { w: 13, bold: true }),
+                cell(`${s.minutes}′`, { w: 8 }),
+                cell(s.teacher, { w: 30 }),
+                cell(s.student, { w: 26 }),
+                cell(s.intent, { w: 23 }),
+              ],
+            }),
+        ),
+      ],
+    }),
+  )
+  children.push(
+    new Paragraph({
+      style: 'Note',
+      children: [
+        new TextRun({
+          text: `合计 ${total} 分钟${
+            total === plan.duration ? '，与设定的课时一致。' : `（与设定的 ${durationLabel(plan.duration)} 不一致，请核对后调整。）`
+          }`,
+          font: FONT_SONG,
+          size: 20,
+          color: GREY,
+        }),
+      ],
+    }),
+  )
+
+  // 五、课堂活动
+  if (plan.activities.length) {
+    children.push(h1('五、课堂活动设计'))
+    plan.activities.forEach((a, i) => {
+      children.push(
+        new Paragraph({
+          style: 'Body',
+          spacing: { before: 120, after: 40 },
+          indent: { firstLine: 0 },
+          children: [
+            new TextRun({ text: `${i + 1}. ${a.name}`, font: FONT_HEI, size: 24, bold: true, color: INK }),
+            new TextRun({
+              text: `　（${a.type} · ${a.minutes} 分钟 · ${a.grouping}）`,
+              font: FONT_SONG,
+              size: 20,
+              color: GREY,
+            }),
+          ],
+        }),
+      )
+      children.push(body(a.desc))
+    })
+  }
+
+  // 六、评价
+  children.push(h1('六、评价方式'))
+  children.push(body(plan.evaluation))
+
+  // 七、分层作业
+  children.push(h1('七、分层作业'))
+  children.push(
+    kvTable([
+      ['基础', plan.homework.basic],
+      ['提升', plan.homework.extend],
+      ['项目', plan.homework.project],
+    ]),
+  )
+
+  // 八、差异化
+  children.push(h1('八、差异化支持'))
+  children.push(
+    kvTable([
+      ['需要支持', plan.differentiation.support],
+      ['学有余力', plan.differentiation.challenge],
+    ]),
+  )
+
+  // 九、板书
+  children.push(h1('九、板书设计'))
+  children.push(body(plan.boardDesign || '（本课未单独设计板书，可结合教学过程第四环节的板书要点补写。）'))
+
+  // 十、教学提示
+  children.push(h1('十、教学提示与反思'))
+  children.push(body(plan.reflection || ''))
+
+  /* ═══ 附录（编号随开关自动顺延）═══ */
+  const appendix: Block[] = []
+  let idx = 0
+  const nextLabel = () => `附录${CN_NUM[Math.min(idx, CN_NUM.length - 1)]}`
+
+  if (opts.rationale && meta.rationale?.length) {
+    appendix.push(h1(`${nextLabel()}、为什么这样配`))
+    idx++
+    meta.rationale.forEach((r) => {
+      appendix.push(
+        new Paragraph({
+          style: 'Body',
+          indent: { firstLine: 0 },
+          spacing: { before: 100, after: 40 },
+          children: [
+            new TextRun({ text: `${r.label}：`, font: FONT_HEI, size: 24, bold: true, color: INK }),
+            new TextRun({ text: r.text, font: FONT_SONG, size: 24, color: INK }),
+          ],
+        }),
+      )
+    })
+  }
+
+  if (opts.materials) {
+    const picked = pickedMaterials
+    const mats = picked.length
+      ? picked
+      : folkItems.flatMap((f) =>
+          f.materialIds
+            .map((id) => MATERIAL_MAP.get(id))
+            .filter((m): m is NonNullable<typeof m> => Boolean(m)),
+        )
+    const rows: [string, string][] = mats.length
+      ? mats.slice(0, 24).map((m) => [
+          m.title,
+          `${
+            m.type === 'image' ? '纹样图' : m.type === 'text' ? '文本' : m.type === 'audio' ? '音频' : '视频'
+          }${m.duration ? ` · ${m.duration}` : ''} · ${m.usage ?? m.desc}${
+            m.status === 'placeholder' ? '（占位，待换成本校素材）' : ''
+          }`,
+        ])
+      : [['—', '本课未选用教学素材']]
+    appendix.push(h1(`${nextLabel()}、教学素材清单`))
+    idx++
+    appendix.push(
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        layout: TableLayoutType.FIXED,
+        borders,
+        rows: [
+          new TableRow({
+            tableHeader: true,
+            children: [cell('素材名称', { w: 30, head: true }), cell('类型 · 说明', { w: 70, head: true })],
+          }),
+          ...rows.map(([a, b]) => new TableRow({ children: [cell(a, { w: 30 }), cell(b, { w: 70 })] })),
+        ],
+      }),
+    )
+  }
+
+  if (opts.cardDigest) {
+    appendix.push(h1(`${nextLabel()}、知识要点摘录`))
+    idx++
+    const cards = plan.pointIds
+      .map((pid) => cardOfPoint(pid))
+      .filter((c): c is NonNullable<typeof c> => Boolean(c))
+    if (cards.length === 0) {
+      appendix.push(body('本课未借用辅助知识点，故无知识要点摘录。'))
+    }
+    cards.forEach((c) => {
+      const p = POINT_MAP.get(c.pointId)
+      appendix.push(h2(`${p?.title ?? c.pointId}${c.status === 'draft' ? '（内容待完善）' : ''}`))
+      appendix.push(body(`核心要点：${c.keyIdeas.join('；')}`))
+      appendix.push(body(`关键概念：${c.concepts.map((x) => `${x.term}——${x.gloss}`).join('；')}`))
+      if (c.misconceptions.length) {
+        appendix.push(
+          body(`常见误区：${c.misconceptions.map((m) => `${m.claim} → ${m.correction}`).join('；')}`),
+        )
+      }
+      appendix.push(body(`课堂追问：${c.inquiries.join('；')}`))
+    })
+  }
+
+  /* ═══ 文末口径声明 ═══ */
+  const footNote = new Paragraph({
+    style: 'Note',
+    spacing: { before: 320, after: 0 },
+    border: { top: { style: BorderStyle.SINGLE, size: 4, color: LINE, space: 8 } },
+    children: [
+      new TextRun({
+        text: '本文档由「乡音课坊」生成，供备课时参考修改。教学主体为本学科内容；《人类与社会》知识点与教学素材仅作辅助。涉及民俗与非遗的表述均为定性描述，未标注批次编号与代表性传承人姓名；音视频素材为占位条目，需替换为本校可用资源后使用。',
+        font: FONT_SONG,
+        size: 18,
+        color: GREY,
+      }),
+    ],
+  })
+
+  const allChildren: Block[] = [...children, ...appendix, footNote]
+
+  /* ═══ 文档 ═══ */
+  const doc = new Document({
+    creator: '乡音课坊',
+    title: plan.title,
+    description: '学科教学教案（含辅助素材）',
+    styles: {
+      default: {
+        document: {
+          run: { font: FONT_SONG, size: 24, color: INK },
+          paragraph: { spacing: { line: 360, lineRule: LineRuleType.AUTO } },
+        },
+      },
+      paragraphStyles: [
+        {
+          id: 'DocTitle',
+          name: '文档标题',
+          basedOn: 'Normal',
+          next: 'Center',
+          quickFormat: true,
+          run: { font: FONT_HEI, size: 44, bold: true, color: INK },
+          paragraph: { alignment: AlignmentType.CENTER, spacing: { before: 0, after: 100 } },
+        },
+        {
+          id: 'Center',
+          name: '居中副题',
+          basedOn: 'Normal',
+          next: 'Body',
+          run: { font: FONT_SONG, size: 18, color: GREY },
+          paragraph: { alignment: AlignmentType.CENTER, spacing: { before: 0, after: 120 } },
+        },
+        {
+          id: 'H1',
+          name: '一级标题',
+          basedOn: 'Normal',
+          next: 'Body',
+          quickFormat: true,
+          run: { font: FONT_HEI, size: 32, bold: true, color: INK },
+          paragraph: {
+            spacing: { before: 280, after: 120, line: 300, lineRule: LineRuleType.AUTO },
+            keepNext: true,
+            outlineLevel: 0,
+          },
+        },
+        {
+          id: 'H2',
+          name: '二级标题',
+          basedOn: 'Normal',
+          next: 'Body',
+          quickFormat: true,
+          run: { font: FONT_HEI, size: 28, bold: true, color: INK },
+          paragraph: {
+            spacing: { before: 160, after: 80, line: 300, lineRule: LineRuleType.AUTO },
+            keepNext: true,
+            outlineLevel: 1,
+          },
+        },
+        {
+          id: 'Body',
+          name: '正文',
+          basedOn: 'Normal',
+          next: 'Body',
+          run: { font: FONT_SONG, size: 24, color: INK },
+          paragraph: {
+            alignment: AlignmentType.JUSTIFIED,
+            spacing: { before: 0, after: 60, line: 360, lineRule: LineRuleType.AUTO },
+            indent: { firstLine: 480 },
+          },
+        },
+        {
+          id: 'ListItem',
+          name: '列表项',
+          basedOn: 'Body',
+          run: { font: FONT_SONG, size: 24, color: INK },
+          paragraph: {
+            alignment: AlignmentType.LEFT,
+            spacing: { before: 0, after: 40, line: 340, lineRule: LineRuleType.AUTO },
+            indent: { left: 560, hanging: 280 },
+          },
+        },
+        {
+          id: 'TableText',
+          name: '表格文字',
+          basedOn: 'Normal',
+          run: { font: FONT_SONG, size: 21, color: INK },
+          paragraph: { spacing: { before: 0, after: 0, line: 260, lineRule: LineRuleType.AUTO } },
+        },
+        {
+          id: 'Note',
+          name: '注释小字',
+          basedOn: 'Normal',
+          run: { font: FONT_SONG, size: 18, color: GREY },
+          paragraph: { spacing: { before: 80, after: 0, line: 280, lineRule: LineRuleType.AUTO } },
+        },
+        {
+          id: 'Gap',
+          name: '空行',
+          basedOn: 'Normal',
+          run: { size: 8 },
+          paragraph: { spacing: { before: 0, after: 0, line: 120, lineRule: LineRuleType.AUTO } },
+        },
+        {
+          id: 'GapSm',
+          name: '窄空行',
+          basedOn: 'Normal',
+          run: { size: 6 },
+          paragraph: { spacing: { before: 0, after: 0, line: 80, lineRule: LineRuleType.AUTO } },
+        },
+      ],
+    },
+    sections: [
+      {
+        properties: {
+          page: {
+            size: { width: PAGE.width, height: PAGE.height },
+            margin: { top: 1440, bottom: 1440, left: 1701, right: 1417, header: 720, footer: 720 },
+          },
+        },
+        headers: {
+          default: new Header({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: LINE, space: 6 } },
+                spacing: { before: 0, after: 0 },
+                children: [
+                  new TextRun({ text: '乡音课坊 · 小学教师备课辅助', font: FONT_SONG, size: 18, color: GREY }),
+                  new TextRun({ text: '　|　', font: FONT_SONG, size: 18, color: LINE }),
+                  new TextRun({ text: meta.topic || plan.title, font: FONT_SONG, size: 18, color: GREY }),
+                ],
+              }),
+            ],
+          }),
+        },
+        footers: {
+          default: new Footer({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                spacing: { before: 0, after: 0 },
+                children: [
+                  new TextRun({ text: '第 ', font: FONT_SONG, size: 18, color: GREY }),
+                  new TextRun({ children: [PageNumber.CURRENT], font: FONT_SONG, size: 18, color: GREY }),
+                  new TextRun({ text: ' 页　共 ', font: FONT_SONG, size: 18, color: GREY }),
+                  new TextRun({ children: [PageNumber.TOTAL_PAGES], font: FONT_SONG, size: 18, color: GREY }),
+                  new TextRun({ text: ' 页', font: FONT_SONG, size: 18, color: GREY }),
+                ],
+              }),
+            ],
+          }),
+        },
+        children: allChildren,
+      },
+    ],
+  })
+
+  return Packer.toBlob(doc)
+}
+
+/* ── 下载 ────────────────────────────────────────────────────────────── */
+
+export function downloadBlob(filename: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1500)
+}
